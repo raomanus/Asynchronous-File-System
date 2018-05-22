@@ -1,0 +1,188 @@
+			CSE-506 Operating Systems HW3
+			Manu Suresh Rao (111447408)
+
+This README file describes the design and implementation details of assignment 3.
+
+* Brief Overview:
+	The following features have been successfully implemented in the code.
+
+	1. Pass the special flags to the clone system call.
+	2. Move files deleted by special processes to the trash folder.
+	3. Perform encryption, compression synchronously on small files.
+	4. Perform encryption, compression asynchronously on large files.
+	5. Support /proc entries for setting the trash folder size, encryption key
+	   and asynchronous queue size.
+	6. Block a process if trash if full.
+	7. Ioctl support for restoring files to original location.
+	8. Periodically deleting the contents of the trash folder.
+	
+* Design details.
+
+	a. CLONE system call
+
+		The clone system call has been modified to accept three additional
+	flags and create processes with these flags. If we observe the flags passed
+	to the clone system call, we notice that there are no unique bit positions
+	available to the new flags. So to overcome this drawback we make use of the
+	invalid flag combination defined in the clone() system call man page. The 
+	new flags have been defined as follows in the include/uapi/linux/sched.h 
+	header file. 
+	
+	#define CLONE_PROT_MV           CLONE_THREAD|CLONE_NEWUSER
+	#define CLONE_PROT_ZIP          CLONE_THREAD|CLONE_NEWPID
+	#define CLONE_PROT_ENC          CLONE_NEWNS|CLONE_FS	
+
+		The task_struct structure was also modified by adding a new del_flags
+	variable. This variable is used to differentiate processes that have these
+	special flags set, and is set in the _do_fork() function of kernel/fork.c .
+		These flags are then read during the unlink process to determine the
+	appropriate actions to take.
+
+
+	b. Setting /proc entries for the various system parameters
+
+		I've also added the following files to the fs/proc/ folder. Each of 
+	these entries corresponds to a proc variable that can be set by the user. The
+	command for setting the values is also shown.
+
+	1. encrypt_pass.c - Sets the encrypt_key variable that can be used for file 
+	encryption.
+		
+		echo "encryptionkeyfromuser" > /proc/encrypt_key
+
+	2. trash_size.c - Sets the trash_size variable that determines the number of
+	files that can be present in the trash folder. The default values is 10.
+
+		echo 15 > /proc/trash_size
+
+	3. work_queue_size.c - Sets the size of the queue used for asynchronous processing.
+	The default value for the queue size is 10.
+
+		echo 15 > /proc/queue_size
+	
+		We can also read the values of these /proc entries through /bin/cat.
+
+	c. Deleting files and moving to trash folder
+		
+		To determine the action to take for unlink we make use of the del_flags
+	member of the current process that is making the call. If this flag is not set
+	then we perform the default unlink action. If it is set, then we perform actions
+	based on the values of the set flags.
+
+	1. CLONE_PROT_MV : If this is the only flag set, then we simply move the file to 
+	the trash folder. 
+
+	2. CLONE_PROT_ZIP : If this flag is set we first compress the contents of the file
+	and them move it to the trash folder. We use the LZ4 compression algorithm to compress
+	the files.
+	
+	3. CLONE_PROT_ENC : If this flag is set, we encrypt the contents of the file and move
+	it to the trash folder. If the user has passed a key using the /proc entry described
+	earlier, we use that as the encryption key else we use a random key for encryption.
+
+	4. CLONE_PROT_ZIP|CLONE_PROT_ENC : Whenever this flag combination is set, we first 
+	encrypt the file and then compress the encrypted file.
+
+
+	d. Synchronous and Asynchronous unlink.
+		
+		Whenever a process with the special flags set deletes a file smaller that 4K,
+	we perform the operations on the file synchronously. For larger files we perform 
+	this asynchronously. The asynchronous functionality is implemented using the linux
+	workqueue APIs defined in linux/workqueue.h. The corresponding functions for 
+	initializing the workqueue are present in the fs/work_queue.c file. Asynchronous 
+	processing of the files is done for the encryption/compression operations and is done
+	after moving the file to the trash folder successfully. We initialize a work_struct
+	variable for each file to be queued and use a work handler function to perform the 
+	operations. The following lists the functions in fs/work_queue.c that perform the
+	operations.
+
+	enqueue_work() - Initializes the work queue and the work_struct object and adds to
+			 the queue.
+
+	do_async_work() - Work handler function that performs the actual asynchronous work.
+
+		In addition to this we also use items_count variable and the async_wait_count
+	counters that allow to synchronize and handle tasks waiiting to access the queue.
+		
+		We also have a wait queue for blocking processes whenever the trash folder is
+	full or if the async queue is full. The variables and initialization functions are 
+	defined in the fs/wait_queue.c file. We have a seperate wait queue for processes 
+	that are blocking on the trash folder and for processes blocking on the async queue.
+	Processes present in these queues are woken up whenever a file is deleted or if an async
+	job was processed. 
+
+
+	e. Blocking and waking up processes.
+		
+		Blocking of processes is done whenever the trash folder is full or the async
+	queue is full. This is done using the following atomic counters.
+	
+	1. items_count - Number of items present in the async queue.
+	2. async_wait_count - Number of processes waiting for the async queue.
+	3. waiting_count - Number of processes blocked on the trash folder.
+	4. trash_file_count - Number of files currently present in the trash folder.
+	
+		During unlink we first check if we have space in the trash folder and if not 
+	we block the process. Everytime we delete an entry from the trash folder we check
+	the counter and wake up one of the processes. Similarly we check the asnyc queue size
+	when adding work to it and block the process if the queue is full. We then wake up
+	the process once one of the entries in the queue has been processed.
+
+	f. Periodic trash cleanup
+	
+		I've also implemented a module which when inserted starts a kernel thread that
+	deletes the oldest file in the recycle bin at intervals of 30 seconds. 
+
+	g. Files add/changed
+	
+	   In the fs folder
+	1. namei.c 
+	2. wait_queue.c
+	3. work_queue.c
+	4. custom.h
+	5. wq.h
+	6. ioctl.c
+	
+	   In the kernel folder
+	7. fork.c
+
+
+	h. Features tested
+	
+	1. Deletion, encryption, compression (both synchronous and asynchronous).
+	2. Blocking on full trash folder.
+	3. Setting and reading /proc values.
+	4. Restoring files to original location.
+	5. Periodic deletion of trashed files.
+	
+
+	i. Testing commands
+
+	1. Command to compile all test cases
+	   
+	   cd hw3/test_scripts/
+	   make all // Compiles all the scripts
+	   make tests // Executes the basic test cases for deletion, encryption/compression
+
+	2. Restore a file
+
+	   make restore // if you did make all above, then no need
+	   ./restore -u <absolute path name of deleted file in recycle bin>
+
+	3. Insert trash cleanup module
+	  
+	   cd hw3/gc/
+	   make
+     	   insmod janitor.ko
+
+	   **Note - The janitor module runs a kernel thread in an infinite loop and cannot be removed using rmmod. Requires system restart.
+
+	4. To test blocking, set trash size to current trash file count and execute one of the scripts.
+		
+	   cd hw3/test_scripts/
+	   echo 5 > /proc/trash_size
+	   ./simple 
+           
+	   This will cause the script to block. In another tab you can manually delete a file from the trash. This will cause the blocked process
+	   to wake up and finish execution.
