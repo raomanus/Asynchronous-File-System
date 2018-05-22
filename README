@@ -1,8 +1,4 @@
-			CSE-506 Operating Systems HW3
-			Manu Suresh Rao (111447408)
-
-This README file describes the design and implementation details of assignment 3.
-
+The following README outlines the implementation details of the project. 
 * Brief Overview:
 	The following features have been successfully implemented in the code.
 
@@ -146,43 +142,3 @@ This README file describes the design and implementation details of assignment 3
 	
 	   In the kernel folder
 	7. fork.c
-
-
-	h. Features tested
-	
-	1. Deletion, encryption, compression (both synchronous and asynchronous).
-	2. Blocking on full trash folder.
-	3. Setting and reading /proc values.
-	4. Restoring files to original location.
-	5. Periodic deletion of trashed files.
-	
-
-	i. Testing commands
-
-	1. Command to compile all test cases
-	   
-	   cd hw3/test_scripts/
-	   make all // Compiles all the scripts
-	   make tests // Executes the basic test cases for deletion, encryption/compression
-
-	2. Restore a file
-
-	   make restore // if you did make all above, then no need
-	   ./restore -u <absolute path name of deleted file in recycle bin>
-
-	3. Insert trash cleanup module
-	  
-	   cd hw3/gc/
-	   make
-     	   insmod janitor.ko
-
-	   **Note - The janitor module runs a kernel thread in an infinite loop and cannot be removed using rmmod. Requires system restart.
-
-	4. To test blocking, set trash size to current trash file count and execute one of the scripts.
-		
-	   cd hw3/test_scripts/
-	   echo 5 > /proc/trash_size
-	   ./simple 
-           
-	   This will cause the script to block. In another tab you can manually delete a file from the trash. This will cause the blocked process
-	   to wake up and finish execution.
